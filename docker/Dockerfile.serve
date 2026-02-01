@@ -1,0 +1,40 @@
+# WatchTower Serving Container
+# Lightweight FastAPI inference server
+
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY pyproject.toml ./
+
+# Install only serving dependencies (lighter)
+RUN pip install --upgrade pip && \
+    pip install fastapi uvicorn[standard] xgboost scikit-learn pandas numpy \
+    pydantic pydantic-settings prometheus-client loguru rich
+
+# Copy source code
+COPY src/ ./src/
+
+# Create model directory
+RUN mkdir -p /app/models
+
+# Expose API port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run FastAPI
+CMD ["uvicorn", "src.serving.app:app", "--host", "0.0.0.0", "--port", "8000"]

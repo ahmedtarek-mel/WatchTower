@@ -1,0 +1,17 @@
+# Prometheus Configuration for WatchTower
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # WatchTower API metrics
+  - job_name: 'watchtower-api'
+    static_configs:
+      - targets: ['api:8000']
+    metrics_path: /metrics
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

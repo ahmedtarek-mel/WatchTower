@@ -1,0 +1,135 @@
+# WatchTower Full Stack
+# Complete MLOps environment with all services
+
+services:
+  # ==========================================================================
+  # MLflow Tracking Server
+  # ==========================================================================
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.0
+    container_name: watchtower-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow/mlflow.db --default-artifact-root /mlflow/artifacts
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # Prefect Server (Workflow Orchestration)
+  # ==========================================================================
+  prefect:
+    image: prefecthq/prefect:2-python3.11
+    container_name: watchtower-prefect
+    ports:
+      - "4200:4200"
+    volumes:
+      - prefect-data:/root/.prefect
+    environment:
+      - PREFECT_SERVER_API_HOST=0.0.0.0
+      - PREFECT_UI_ENABLED=true
+    command: prefect server start --host 0.0.0.0
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4200/api/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # WatchTower API (Inference Server)
+  # ==========================================================================
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.serve
+    container_name: watchtower-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../models:/app/models:ro
+      - ../src:/app/src:ro
+    environment:
+      - WATCHTOWER_MLFLOW_TRACKING_URI=http://mlflow:5000
+      - WATCHTOWER_LOG_LEVEL=INFO
+    depends_on:
+      - mlflow
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # Prometheus (Metrics Collection)
+  # ==========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: watchtower-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      - api
+
+  # ==========================================================================
+  # Grafana (Visualization Dashboard)
+  # ==========================================================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: watchtower-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=watchtower
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+  # ==========================================================================
+  # GPU Training Container (one-off runs)
+  # ==========================================================================
+  train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.train
+    container_name: watchtower-train
+    volumes:
+      - ../data:/app/data:ro
+      - ../models:/app/models
+      - ../src:/app/src:ro
+    environment:
+      - WATCHTOWER_MLFLOW_TRACKING_URI=http://mlflow:5000
+      - NVIDIA_VISIBLE_DEVICES=all
+    depends_on:
+      - mlflow
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    profiles:
+      - training # Only runs when explicitly called
+
+volumes:
+  mlflow-data:
+  prefect-data:
+  prometheus-data:
+  grafana-data:
